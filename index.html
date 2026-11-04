@@ -11,6 +11,10 @@
     <div class="max-w-md mx-auto bg-white rounded-xl shadow-lg overflow-hidden md:max-w-2xl p-6 border border-slate-200">
         <h1 class="text-2xl font-extrabold mb-4 text-center text-slate-900">CAC Sign-in Scanner</h1>
         
+        <div id="securityWarning" class="hidden mb-4 p-4 bg-red-100 text-red-700 rounded-lg text-sm font-semibold border border-red-200">
+            Warning: You are opening this file locally. Android browsers block camera access for local files for security reasons. You must host this on a secure server (HTTPS) or use a local web server app.
+        </div>
+
         <div class="mb-4 relative rounded overflow-hidden bg-black shadow-inner">
             <video id="video" class="w-full object-cover" style="min-height: 250px;"></video>
             <div id="overlay" class="absolute inset-0 border-4 border-blue-500/50 m-4 rounded hidden pointer-events-none"></div>
@@ -64,38 +68,59 @@
 
     <script>
         let codeReader;
+        let activeStream;
         const roster = [];
         
         window.addEventListener('load', function () {
-            // Initialize ZXing PDF417 specific reader
+            if (window.location.protocol === 'file:' || window.location.protocol === 'content:') {
+                document.getElementById('securityWarning').classList.remove('hidden');
+            }
+
             const hints = new Map();
             hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.PDF_417]);
             codeReader = new ZXing.BrowserMultiFormatReader(hints);
 
             const overlay = document.getElementById('overlay');
 
-            document.getElementById('startButton').addEventListener('click', () => {
-                overlay.classList.remove('hidden');
-                
-                // Prioritize rear camera for phones
-                codeReader.decodeFromConstraints({ video: { facingMode: "environment" } }, 'video', (result, err) => {
-                    if (result) {
-                        playBeep();
-                        processBarcodeData(result.text);
-                        // Stop scanning after successful read
-                        codeReader.reset();
-                        overlay.classList.add('hidden');
+            document.getElementById('startButton').addEventListener('click', async () => {
+                try {
+                    activeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                    overlay.classList.remove('hidden');
+                    
+                    const videoElement = document.getElementById('video');
+                    videoElement.srcObject = activeStream;
+                    videoElement.setAttribute("playsinline", true);
+                    videoElement.play();
+
+                    codeReader.decodeFromVideoElement(videoElement, (result, err) => {
+                        if (result) {
+                            playBeep();
+                            processBarcodeData(result.text);
+                            stopScanner();
+                        }
+                    });
+                } catch (err) {
+                    console.error("Camera access error:", err);
+                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                        alert("Permission to use the camera was denied. Please clear site settings and allow access.");
+                    } else if (err.message && err.message.includes('getUserMedia is not implemented')) {
+                        alert("Your browser is blocking camera access because this file is not hosted on a secure server (HTTPS).");
+                    } else {
+                        alert("Camera error: " + err.message);
                     }
-                }).catch(err => {
-                    console.error(err);
-                    alert("Camera access error. Ensure permissions are granted.");
-                });
+                }
             });
 
-            document.getElementById('resetButton').addEventListener('click', () => {
+            document.getElementById('resetButton').addEventListener('click', stopScanner);
+
+            function stopScanner() {
                 codeReader.reset();
+                if (activeStream) {
+                    activeStream.getTracks().forEach(track => track.stop());
+                    activeStream = null;
+                }
                 overlay.classList.add('hidden');
-            });
+            }
 
             document.getElementById('addToList').addEventListener('click', () => {
                 const name = document.getElementById('parsedName').value.trim();
@@ -106,7 +131,6 @@
                     roster.push({ name, dodId, time });
                     updateRosterView();
                     
-                    // Clear inputs for next person
                     document.getElementById('parsedName').value = '';
                     document.getElementById('parsedId').value = '';
                     document.getElementById('rawData').value = '';
@@ -121,15 +145,12 @@
                     return;
                 }
                 
-                // Construct CSV
                 let csvContent = "data:text/csv;charset=utf-8,Name,DoD ID,Time\n";
                 roster.forEach(row => {
-                    // Escape quotes in names if any exist
                     const safeName = row.name.replace(/"/g, '""');
                     csvContent += `"${safeName}","${row.dodId}","${row.time}"\n`;
                 });
                 
-                // Trigger download
                 const encodedUri = encodeURI(csvContent);
                 const link = document.createElement("a");
                 link.setAttribute("href", encodedUri);
@@ -145,19 +166,15 @@
                 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 const oscillator = audioCtx.createOscillator();
                 const gainNode = audioCtx.createGain();
-                
                 oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // 880 Hz
-                
-                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime); // Volume
-                
+                oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
                 oscillator.connect(gainNode);
                 gainNode.connect(audioCtx.destination);
-                
                 oscillator.start();
-                oscillator.stop(audioCtx.currentTime + 0.15); // 150ms beep
+                oscillator.stop(audioCtx.currentTime + 0.15);
             } catch (e) {
-                console.log("Audio not supported or blocked");
+                console.log("Audio not supported");
             }
         }
 
@@ -168,37 +185,53 @@
             let dodId = "";
             let name = "";
 
-            // Heuristic 1: Extract 10-digit EDIPI (DoD ID)
-            const dodIdMatch = rawData.match(/\b\d{10}\b/);
-            if (dodIdMatch) {
-                dodId = dodIdMatch[0];
+            // DMDC Standard CAC Format Parsing
+            try {
+                // EDIPI is Base32 encoded in characters 1 through 7
+                const base32Edipi = rawData.substring(1, 8);
+                const parsedEdipi = parseInt(base32Edipi, 32);
+                
+                // If it successfully parses into a valid number length, extract the rest
+                if (!isNaN(parsedEdipi) && parsedEdipi.toString().length >= 9) {
+                    dodId = parsedEdipi.toString().padStart(10, '0');
+                    
+                    // Fixed-width extraction based on DoD specs
+                    const firstName = rawData.substring(16, 36).trim();
+                    const lastName = rawData.substring(37, 63).trim();
+                    
+                    if (lastName || firstName) {
+                        name = `${lastName}, ${firstName}`;
+                    }
+                }
+            } catch (e) {
+                console.warn("Not a standard DMDC encoded CAC", e);
             }
 
-            // Heuristic 2: Try extracting name
-            // CACs store data in slightly different formats (AAMVA or raw lines).
-            // Often, name fields start with "NMD" or "NAM" or are simply formatted as LAST,FIRST
-            const lines = rawData.split(/[\n\r^]+/);
-            for (let line of lines) {
-                if (line.includes("NMD") || line.includes("NAM")) {
-                    name = line.replace(/(NMD|NAM)/g, '').trim();
-                    break;
-                }
+            // Fallback Heuristics for older formats or alternative layouts
+            if (!dodId) {
+                const dodIdMatch = rawData.match(/\b\d{10}\b/);
+                if (dodIdMatch) dodId = dodIdMatch[0];
             }
-            
-            // If the heuristics fail, leave blank so the user can easily type it
-            if(!name) {
-                // Try looking for standard AAMVA DAA or DAB tags
-                const dcsMatch = rawData.match(/DCS([A-Z\s]+)/); // Last name
-                const dacMatch = rawData.match(/DAC([A-Z\s]+)/); // First name
-                if (dcsMatch && dacMatch) {
-                    name = `${dcsMatch[1].trim()}, ${dacMatch[1].trim()}`;
+
+            if (!name) {
+                const lines = rawData.split(/[\n\r^]+/);
+                for (let line of lines) {
+                    if (line.includes("NMD") || line.includes("NAM")) {
+                        name = line.replace(/(NMD|NAM)/g, '').trim();
+                        break;
+                    }
+                }
+                if (!name) {
+                    const dcsMatch = rawData.match(/DCS([A-Z\s]+)/);
+                    const dacMatch = rawData.match(/DAC([A-Z\s]+)/);
+                    if (dcsMatch && dacMatch) {
+                        name = `${dcsMatch[1].trim()}, ${dacMatch[1].trim()}`;
+                    }
                 }
             }
 
             document.getElementById('parsedName').value = name;
             document.getElementById('parsedId').value = dodId;
-            
-            // Scroll to review section so the user sees it on a small screen
             document.getElementById('reviewSection').scrollIntoView({ behavior: 'smooth' });
         }
 
@@ -225,4 +258,3 @@
     </script>
 </body>
 </html>
-

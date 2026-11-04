@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>High-Speed CAC Roster Scanner</title>
+    <title>Military CAC Scanner (High-Performance PDF417)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="text/javascript" src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
     <style>
         @keyframes scanPulse {
-            0%, 100% { border-color: rgba(59, 130, 246, 0.4); box-shadow: 0 0 0 rgba(59, 130, 246, 0); }
-            50% { border-color: rgba(34, 197, 94, 0.9); box-shadow: 0 0 15px rgba(34, 197, 94, 0.4); }
+            0%, 100% { border-color: rgba(59, 130, 246, 0.4); box-shadow: 0 0 4px rgba(59, 130, 246, 0.2); }
+            50% { border-color: rgba(34, 197, 94, 0.9); box-shadow: 0 0 20px rgba(34, 197, 94, 0.6); }
         }
         .scanning-active {
             animation: scanPulse 1.5s infinite;
@@ -24,11 +24,11 @@
 <body class="bg-slate-100 p-4 font-sans antialiased text-slate-800">
     <div class="max-w-4xl mx-auto bg-white rounded-xl shadow-lg overflow-hidden p-6 border border-slate-200">
         
-        <!-- Header & Status -->
-        <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-2">
+        <!-- Header -->
+        <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-2 border-b border-slate-100 pb-4">
             <div>
-                <h1 class="text-2xl font-extrabold text-slate-900">CAC Roster Scanner</h1>
-                <p id="engineStatus" class="text-xs font-mono text-slate-500">Initializing decoder engine...</p>
+                <h1 class="text-2xl font-extrabold text-slate-900">DoW CAC Roster Scanner</h1>
+                <p id="engineStatus" class="text-xs font-mono text-slate-500">Initializing high-res camera feed...</p>
             </div>
             <div class="flex items-center gap-2">
                 <span class="text-xs font-semibold uppercase px-2.5 py-1 rounded bg-blue-100 text-blue-800">
@@ -37,50 +37,58 @@
             </div>
         </div>
 
-        <div id="securityWarning" class="hidden mb-4 p-4 bg-red-100 text-red-700 rounded-lg text-sm font-semibold border border-red-200">
-            Warning: Camera access requires HTTPS or localhost. Opening via file:// will block the video stream on mobile browsers.
+        <!-- Security Warning for Local Files -->
+        <div id="securityWarning" class="hidden mb-4 p-4 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-semibold border border-yellow-200">
+            ⚠️ Camera access requires HTTPS or localhost. If opening via file://, mobile browsers will block the video feed.
         </div>
 
-        <!-- Video Viewport -->
-        <div class="mb-4 relative rounded-lg overflow-hidden bg-black shadow-inner aspect-video max-h-72 mx-auto flex items-center justify-center">
+        <!-- High-Res Viewport -->
+        <div class="mb-4 relative rounded-lg overflow-hidden bg-black shadow-inner aspect-video max-h-80 mx-auto flex items-center justify-center">
             <video id="video" class="w-full h-full object-cover" playsinline muted></video>
             
-            <!-- Target Guide Box -->
-            <div id="overlay" class="absolute w-3/4 h-1/2 border-2 border-blue-400/60 rounded-lg hidden pointer-events-none flex flex-col justify-between p-2">
-                <div class="text-[10px] text-white/80 font-mono bg-black/50 px-1.5 py-0.5 rounded self-start">ALIGN PDF417 OR CODE39 BARCODE HERE</div>
-                <div class="w-full h-0.5 bg-red-500/70 my-auto"></div>
-                <div></div>
+            <!-- Target Box Guide -->
+            <div id="overlay" class="absolute w-5/6 h-2/3 border-4 border-blue-500/40 rounded-lg hidden pointer-events-none flex flex-col justify-between p-3">
+                <div class="text-[10px] text-white/90 font-mono bg-black/70 px-2 py-0.5 rounded self-start tracking-wider">
+                    ALIGN CAC BACK BARCODE (PDF417) OR FRONT BARCODE (CODE39) HERE
+                </div>
+                <div class="w-full h-0.5 bg-red-500/80 shadow-[0_0_8px_rgba(239,68,68,0.8)] my-auto"></div>
+                <div class="text-[9px] text-white/70 text-center font-semibold bg-black/40 py-0.5 rounded">
+                    Hold steady 5-7 inches away. Ensure card is well-lit.
+                </div>
             </div>
 
             <!-- Flash feedback on successful scan -->
-            <div id="scanFlash" class="absolute inset-0 bg-green-400/40 hidden pointer-events-none transition-opacity"></div>
+            <div id="scanFlash" class="absolute inset-0 bg-emerald-400/40 hidden pointer-events-none transition-opacity"></div>
         </div>
 
         <!-- Scanner Controls -->
         <div class="flex flex-wrap justify-center gap-3 mb-6">
-            <button id="startButton" class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold py-2.5 px-6 rounded-lg shadow transition">
+            <button id="startButton" class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold py-2.5 px-6 rounded-lg shadow-md transition">
                 Start Scanner
             </button>
-            <button id="stopButton" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 px-6 rounded-lg shadow transition hidden">
+            <button id="stopButton" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 px-6 rounded-lg shadow-md transition hidden">
                 Stop Scanner
             </button>
+            <button id="torchButton" class="bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2.5 px-4 rounded-lg shadow-md transition hidden">
+                🔦 Toggle Flashlight
+            </button>
             <button id="manualAddBtn" class="bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold py-2.5 px-4 rounded-lg transition text-sm">
-                + Manual Row
+                + Manual Entry
             </button>
         </div>
 
-        <!-- Visual Roster Table -->
+        <!-- Captured Roster Section -->
         <div class="border-t border-slate-200 pt-5">
-            <div class="flex flex-wrap justify-between items-center mb-3 gap-2">
+            <div class="flex flex-wrap justify-between items-center mb-4 gap-2">
                 <div>
-                    <h2 class="text-lg font-bold text-slate-800">Captured CAC Roster</h2>
-                    <p class="text-xs text-slate-500">Click any cell to edit inline. Duplicate scans within 4 seconds are ignored.</p>
+                    <h2 class="text-lg font-bold text-slate-800">Scanned Personnel Roster</h2>
+                    <p class="text-xs text-slate-500">Cells are editable. Click directly on a Name, Branch, or DoD ID to correct it.</p>
                 </div>
                 <div class="flex gap-2">
-                    <button id="clearRosterBtn" class="bg-slate-100 hover:bg-red-50 text-red-600 border border-slate-300 text-xs font-bold py-2 px-3 rounded transition">
-                        Clear All
+                    <button id="clearRosterBtn" class="bg-slate-100 hover:bg-red-50 text-red-600 border border-slate-200 text-xs font-bold py-2 px-3 rounded-lg transition">
+                        Clear Roster
                     </button>
-                    <button id="exportCsv" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow transition">
+                    <button id="exportCsv" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded-lg shadow-sm transition">
                         Export CSV
                     </button>
                 </div>
@@ -91,17 +99,17 @@
                     <thead>
                         <tr class="bg-slate-800 text-white uppercase text-xs tracking-wider">
                             <th class="py-3 px-3 font-bold w-12 text-center">#</th>
-                            <th class="py-3 px-3 font-bold">Last, First Name</th>
+                            <th class="py-3 px-4 font-bold">Last, First Name</th>
                             <th class="py-3 px-3 font-bold">Rank / Branch</th>
                             <th class="py-3 px-3 font-bold">DoD ID (EDIPI)</th>
-                            <th class="py-3 px-3 font-bold">Timestamp</th>
+                            <th class="py-3 px-3 font-bold">Time Captured</th>
                             <th class="py-3 px-2 text-center font-bold w-16">Del</th>
                         </tr>
                     </thead>
                     <tbody id="rosterBody" class="divide-y divide-slate-200 text-slate-700 text-sm">
                         <tr id="emptyState">
                             <td colspan="6" class="py-8 text-center text-slate-400 italic">
-                                No CACs scanned yet. Click "Start Scanner" and hold the back barcode inside the target box.
+                                No CACs scanned yet. Point your camera at a barcode to auto-populate this roster.
                             </td>
                         </tr>
                     </tbody>
@@ -111,7 +119,7 @@
     </div>
 
     <script>
-        // --- 1. Persistent Audio Context (Zero-Lag Beep) ---
+        // --- 1. Persistent Audio Engine ---
         let audioCtx = null;
         function playBeep() {
             try {
@@ -120,78 +128,77 @@
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
                 osc.type = 'triangle';
-                osc.frequency.setValueAtTime(1046.50, audioCtx.currentTime); // C6 crisp tone
-                gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+                osc.frequency.setValueAtTime(1046.50, audioCtx.currentTime); // Crisp High C
+                gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
                 osc.connect(gain);
                 gain.connect(audioCtx.destination);
                 osc.start();
-                osc.stop(audioCtx.currentTime + 0.1);
+                osc.stop(audioCtx.currentTime + 0.08);
             } catch (e) {}
         }
 
-        // --- 2. State & Elements ---
+        // --- 2. Interface Elements ---
         const video = document.getElementById('video');
         const overlay = document.getElementById('overlay');
         const scanFlash = document.getElementById('scanFlash');
         const startBtn = document.getElementById('startButton');
         const stopBtn = document.getElementById('stopButton');
+        const torchBtn = document.getElementById('torchButton');
         const engineStatus = document.getElementById('engineStatus');
         const rosterBody = document.getElementById('rosterBody');
         const scanCountEl = document.getElementById('scanCount');
 
         let mediaStream = null;
         let isScanning = false;
-        let scanLoopTimer = null;
-        let nativeDetector = null;
+        let scanTimer = null;
         let zxingReader = null;
-        let offscreenCanvas = document.createElement('canvas');
-        let offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+        let videoTrack = null;
+        let flashOn = false;
 
         let lastScannedRaw = "";
         let lastScanTime = 0;
 
-        // --- 3. Initialize Fastest Available Barcode Engine ---
-        window.addEventListener('DOMContentLoaded', async () => {
+        // Base-32 Decoder to translate Code 39 strings
+        const B32_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUV";
+        function decodeBase32(str) {
+            let num = 0n;
+            for (let char of str.toUpperCase()) {
+                const val = B32_ALPHABET.indexOf(char);
+                if (val === -1) return NaN;
+                num = (num * 32n) + BigInt(val);
+            }
+            return num.toString();
+        }
+
+        // --- 3. Initialize ZXing Multi-Format Reader ---
+        window.addEventListener('DOMContentLoaded', () => {
             if (window.location.protocol === 'file:' || window.location.protocol === 'content:') {
                 document.getElementById('securityWarning').classList.remove('hidden');
             }
 
-            // Check for hardware-accelerated native BarcodeDetector first
-            if ('BarcodeDetector' in window) {
-                try {
-                    const formats = await BarcodeDetector.getSupportedFormats();
-                    if (formats.includes('pdf417')) {
-                        nativeDetector = new BarcodeDetector({ formats: ['pdf417', 'code_39'] });
-                        engineStatus.textContent = "Engine: Hardware-Accelerated Native PDF417 (Zero-Lag)";
-                        engineStatus.className = "text-xs font-mono text-emerald-600 font-semibold";
-                    }
-                } catch (e) {}
-            }
+            const hints = new Map();
+            hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+                ZXing.BarcodeFormat.PDF_417,
+                ZXing.BarcodeFormat.CODE_39
+            ]);
+            // This is the secret to high-reliability PDF417 scanning over webcams:
+            hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
 
-            // Fallback to throttled ZXing with strict PDF417 + Code39 hints
-            if (!nativeDetector) {
-                const hints = new Map();
-                hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-                    ZXing.BarcodeFormat.PDF_417,
-                    ZXing.BarcodeFormat.CODE_39
-                ]);
-                // Note: Intentionally omitting TRY_HARDER so frames decode in <15ms without freezing UI
-                zxingReader = new ZXing.BrowserMultiFormatReader(hints);
-                engineStatus.textContent = "Engine: Throttled ZXing ROI Decoder (150ms interval)";
-            }
+            zxingReader = new ZXing.BrowserMultiFormatReader(hints);
+            engineStatus.textContent = "Engine: Active (High-Res Decoupled Thread Mode)";
         });
 
-        // --- 4. Non-Blocking Camera & Throttled Decode Loop ---
+        // --- 4. Camera Stream Lifecycle ---
         startBtn.addEventListener('click', async () => {
             try {
-                // Unlock audio on user gesture
                 if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
+                // Force 1080p resolution to read high-density PDF417 patterns
                 mediaStream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         facingMode: { ideal: "environment" },
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 },
+                        width: { min: 1280, ideal: 1920 },
+                        height: { min: 720, ideal: 1080 },
                         focusMode: { ideal: "continuous" }
                     },
                     audio: false
@@ -200,24 +207,48 @@
                 video.srcObject = mediaStream;
                 await video.play();
 
+                videoTrack = mediaStream.getVideoTracks()[0];
                 isScanning = true;
+
+                // Check for camera flash capabilities
+                const capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+                if (capabilities.torch) {
+                    torchBtn.classList.remove('hidden');
+                }
+
                 startBtn.classList.add('hidden');
                 stopBtn.classList.remove('hidden');
                 overlay.classList.remove('hidden');
                 overlay.classList.add('scanning-active');
 
-                scheduleNextScan();
+                scanFrameLoop();
             } catch (err) {
-                alert("Camera Error: " + err.message);
+                alert("Camera initialization failed. Please verify camera permissions and that no other app is using it.");
                 stopScanner();
             }
         });
 
         stopBtn.addEventListener('click', stopScanner);
 
+        torchBtn.addEventListener('click', async () => {
+            if (!videoTrack) return;
+            try {
+                flashOn = !flashOn;
+                await videoTrack.applyConstraints({
+                    advanced: [{ torch: flashOn }]
+                });
+                torchBtn.textContent = flashOn ? "💡 Turn Off Light" : "🔦 Toggle Flashlight";
+            } catch (e) {
+                console.warn("Torch control failed", e);
+            }
+        });
+
         function stopScanner() {
             isScanning = false;
-            if (scanLoopTimer) clearTimeout(scanLoopTimer);
+            flashOn = false;
+            torchBtn.classList.add('hidden');
+            torchBtn.textContent = "🔦 Toggle Flashlight";
+            if (scanTimer) clearTimeout(scanTimer);
             if (mediaStream) {
                 mediaStream.getTracks().forEach(track => track.stop());
                 mediaStream = null;
@@ -229,53 +260,29 @@
             startBtn.classList.remove('hidden');
         }
 
-        function scheduleNextScan() {
+        // --- 5. Non-Blocking High-Precision Detection Loop ---
+        async function scanFrameLoop() {
             if (!isScanning) return;
-            scanLoopTimer = setTimeout(scanSingleFrame, 140); // ~7 FPS prevents main-thread freeze
-        }
 
-        async function scanSingleFrame() {
-            if (!isScanning || video.readyState < 2) {
-                scheduleNextScan();
-                return;
-            }
-
-            try {
-                if (nativeDetector) {
-                    const barcodes = await nativeDetector.detect(video);
-                    if (barcodes.length > 0 && barcodes[0].rawValue) {
-                        handleSuccessfulRead(barcodes[0].rawValue);
-                    }
-                } else if (zxingReader) {
-                    // Crop central 80% region of interest so ZXing processes fewer pixels
-                    const vw = video.videoWidth;
-                    const vh = video.videoHeight;
-                    const cropW = Math.floor(vw * 0.8);
-                    const cropH = Math.floor(vh * 0.6);
-                    const startX = Math.floor((vw - cropW) / 2);
-                    const startY = Math.floor((vh - cropH) / 2);
-
-                    offscreenCanvas.width = cropW;
-                    offscreenCanvas.height = cropH;
-                    offscreenCtx.drawImage(video, startX, startY, cropW, cropH, 0, 0, cropW, cropH);
-
-                    const luminanceSource = new ZXing.HTMLCanvasElementLuminanceSource(offscreenCanvas);
-                    const binaryBitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminanceSource));
-                    const result = zxingReader.decodeBitmap(binaryBitmap);
+            if (video.readyState >= 2) {
+                try {
+                    // Pull frame directly from video buffer
+                    const result = await zxingReader.decodeOnceFromVideoElement(video);
                     if (result && result.text) {
                         handleSuccessfulRead(result.text);
                     }
+                } catch (err) {
+                    // Expected when no barcode is in current frame
                 }
-            } catch (err) {
-                // Normal when no barcode is present in current frame
             }
 
-            scheduleNextScan();
+            // High frequency scan check (60ms) to ensure instant response
+            scanTimer = setTimeout(scanFrameLoop, 60);
         }
 
         function handleSuccessfulRead(rawText) {
             const now = Date.now();
-            // 4-second cooldown for the exact same card
+            // Prevent scanning the exact same barcode multiple times within 4 seconds
             if (rawText === lastScannedRaw && (now - lastScanTime) < 4000) return;
 
             lastScannedRaw = rawText;
@@ -290,69 +297,63 @@
 
         function triggerVisualFlash() {
             scanFlash.classList.remove('hidden');
-            setTimeout(() => scanFlash.classList.add('hidden'), 180);
+            setTimeout(() => scanFlash.classList.add('hidden'), 120);
         }
 
-        // --- 5. Instant O(1) DMDC CAC Barcode Parser (PDF417 & Code 39) ---
+        // --- 6. Robust DMDC CAC Code Decryption Engine ---
         function parseDoDCAC(raw) {
             const clean = raw.trim();
             let dodId = "";
             let name = "";
             let rankBranch = "N/A";
 
-            // Case 1: Back of CAC 2D PDF417 Barcode (88 chars Version '1' or 89 chars Version 'N')
-            if ((clean.startsWith('N') || clean.startsWith('1')) && clean.length >= 78) {
-                // Version 'N' has an 8-char random prefix before index 8; Version '1' starts at index 1
-                const offset = clean.startsWith('N') ? 1 : 0;
+            // Branch Map Table
+            const branchMap = { 
+                'A': 'USA', 'F': 'USAF', 'N': 'USN', 'M': 'USMC', 'C': 'USCG', 
+                'S': 'USSF', 'D': 'DoD Civ', 'E': 'DoD Contr' 
+            };
 
-                // Extract 7-char Base32 Person Designator Identifier (EDIPI / DoD ID)
-                const b32Edipi = clean.substring(7 + offset, 14 + offset).trim();
-                const parsedEdipi = parseInt(b32Edipi, 32);
-                if (!isNaN(parsedEdipi)) {
-                    dodId = parsedEdipi.toString().padStart(10, '0');
+            // Case A: Front of Card (Code 39 Barcode - e.g. "1TXS2SHX1975EHEAF8")
+            if (clean.length === 18 && clean.startsWith('1')) {
+                const b32Edipi = clean.substring(1, 8);
+                const decodedId = decodeBase32(b32Edipi);
+                if (decodedId && !isNaN(decodedId)) {
+                    dodId = decodedId.padStart(10, '0');
                 }
 
-                // Extract First Name (20 chars) and Last Name (26 chars)
+                const branchCode = clean.substring(14, 15);
+                const branchLabel = branchMap[branchCode.toUpperCase()] || branchCode;
+                rankBranch = `Unknown / ${branchLabel}`;
+                name = "[Front Scanned - Tap to input Name]";
+            }
+            // Case B: Back of Card (PDF417 - Version 'N' or Version '1' standard DMDC)
+            else if ((clean.startsWith('N') || clean.startsWith('1')) && clean.length >= 78) {
+                const offset = clean.startsWith('N') ? 1 : 0;
+
+                const b32Edipi = clean.substring(7 + offset, 14 + offset);
+                const decodedId = decodeBase32(b32Edipi);
+                if (decodedId && !isNaN(decodedId)) {
+                    dodId = decodedId.padStart(10, '0');
+                }
+
                 const firstName = clean.substring(15 + offset, 35 + offset).trim();
                 const lastName = clean.substring(35 + offset, 61 + offset).trim();
                 if (lastName || firstName) {
                     name = `${lastName}, ${firstName}`;
                 }
 
-                // Extract Branch & Rank (positions 65..77 + offset)
                 const branchCode = clean.substring(65 + offset, 66 + offset).trim();
                 const rankCode = clean.substring(71 + offset, 77 + offset).trim();
-                const branchMap = { 'A': 'USA', 'F': 'USAF', 'N': 'USN', 'M': 'USMC', 'C': 'USCG', 'S': 'USSF', 'D': 'DoD' };
-                const branchLabel = branchMap[branchCode] || branchCode;
-                if (rankCode || branchLabel) {
-                    rankBranch = [rankCode, branchLabel].filter(Boolean).join(' / ');
-                }
+                const branchLabel = branchMap[branchCode.toUpperCase()] || branchCode;
+                rankBranch = [rankCode, branchLabel].filter(Boolean).join(' / ');
             }
-            // Case 2: Front of CAC 1D Code 39 Barcode (18 chars, starts with '1')
-            else if (clean.length === 18 && clean.startsWith('1')) {
-                const b32Edipi = clean.substring(1, 8).trim();
-                const parsedEdipi = parseInt(b32Edipi, 32);
-                if (!isNaN(parsedEdipi)) {
-                    dodId = parsedEdipi.toString().padStart(10, '0');
-                }
-                name = "[Front Barcode - Enter Name]";
-            }
-            // Case 3: Older or Alternate Delimited DMDC Formats
+            // Fallback: Check for flat decimal EDIPI strings
             else {
-                const b32Candidate = clean.substring(1, 8);
-                const parsedCandidate = parseInt(b32Candidate, 32);
-                if (!isNaN(parsedCandidate) && parsedCandidate.toString().length >= 9) {
-                    dodId = parsedCandidate.toString().padStart(10, '0');
-                } else {
-                    const tenDigit = clean.match(/\b\d{10}\b/);
-                    if (tenDigit) dodId = tenDigit[0];
+                const tenDigit = clean.match(/\b\d{10}\b/);
+                if (tenDigit) {
+                    dodId = tenDigit[0];
                 }
-
-                if (clean.length >= 63) {
-                    const fn = clean.substring(16, 36).trim();
-                    const ln = clean.substring(36, 62).trim();
-                    if (ln || fn) name = `${ln}, ${fn}`;
-                }
+                name = "UNRECOGNIZED BARCODE";
             }
 
             return {
@@ -362,7 +363,7 @@
             };
         }
 
-        // --- 6. Visual Roster Table Management ---
+        // --- 7. Roster Table Layout Control ---
         function addToRoster(name, rankBranch, dodId) {
             const emptyState = document.getElementById('emptyState');
             if (emptyState) emptyState.remove();
@@ -373,12 +374,12 @@
 
             tr.innerHTML = `
                 <td class="row-index py-3 px-3 text-center font-mono text-xs text-slate-400"></td>
-                <td contenteditable="true" class="py-3 px-3 font-semibold text-slate-800 whitespace-nowrap">${escapeHtml(name)}</td>
+                <td contenteditable="true" class="py-3 px-4 font-semibold text-slate-800 whitespace-nowrap">${escapeHtml(name)}</td>
                 <td contenteditable="true" class="py-3 px-3 text-slate-600 whitespace-nowrap">${escapeHtml(rankBranch)}</td>
                 <td contenteditable="true" class="py-3 px-3 font-mono text-blue-700 font-semibold whitespace-nowrap">${escapeHtml(dodId)}</td>
                 <td class="py-3 px-3 text-xs text-slate-500 whitespace-nowrap">${timestamp}</td>
                 <td class="py-3 px-2 text-center">
-                    <button onclick="removeRow(this)" class="text-red-500 hover:text-red-700 hover:bg-red-50 font-bold px-2.5 py-1 rounded transition">✕</button>
+                    <button onclick="removeRow(this)" class="text-red-500 hover:text-red-700 hover:bg-red-50 font-bold px-2 py-1 rounded transition">✕</button>
                 </td>
             `;
 
@@ -390,7 +391,7 @@
             btn.closest('tr').remove();
             renumberRoster();
             if (rosterBody.children.length === 0) {
-                rosterBody.innerHTML = `<tr id="emptyState"><td colspan="6" class="py-8 text-center text-slate-400 italic">No CACs scanned yet. Click "Start Scanner" and hold the back barcode inside the target box.</td></tr>`;
+                rosterBody.innerHTML = `<tr id="emptyState"><td colspan="6" class="py-8 text-center text-slate-400 italic">No CACs scanned yet. Point your camera at a barcode to auto-populate this roster.</td></tr>`;
             }
         };
 
@@ -408,12 +409,12 @@
         }
 
         document.getElementById('manualAddBtn').addEventListener('click', () => {
-            addToRoster("LAST, FIRST", "RANK / USAF", "0000000000");
+            addToRoster("LAST, FIRST", "RANK / USAF", "1000000000");
         });
 
         document.getElementById('clearRosterBtn').addEventListener('click', () => {
-            if (confirm("Clear all scanned personnel from the roster?")) {
-                rosterBody.innerHTML = `<tr id="emptyState"><td colspan="6" class="py-8 text-center text-slate-400 italic">No CACs scanned yet. Click "Start Scanner" and hold the back barcode inside the target box.</td></tr>`;
+            if (confirm("Are you sure you want to clear the active roster?")) {
+                rosterBody.innerHTML = `<tr id="emptyState"><td colspan="6" class="py-8 text-center text-slate-400 italic">No CACs scanned yet. Point your camera at a barcode to auto-populate this roster.</td></tr>`;
                 scanCountEl.textContent = "0";
                 lastScannedRaw = "";
             }
@@ -426,7 +427,7 @@
                 return;
             }
 
-            let csvRows = ["#,Name,Rank_Branch,DoD_ID,Timestamp"];
+            let csvRows = ["#,Last_First_Name,Rank_Branch,DoD_ID,Timestamp"];
             rows.forEach(row => {
                 const cells = row.querySelectorAll('td');
                 const num = cells[0].innerText.trim();
@@ -441,7 +442,7 @@
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
             link.href = url;
-            link.download = `CAC_Roster_${new Date().toISOString().slice(0, 10)}.csv`;
+            link.download = `CAC_Sign_In_Roster_${new Date().toISOString().slice(0, 10)}.csv`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);

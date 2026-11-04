@@ -3,18 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>CAC Scanner Continuous</title>
+    <title>High-Speed CAC Roster Scanner</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script type="text/javascript" src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
+    <script type="text/javascript" src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
     <style>
-        /* Pulse animation for the scanning overlay */
         @keyframes scanPulse {
-            0% { border-color: rgba(59, 130, 246, 0.3); }
-            50% { border-color: rgba(59, 130, 246, 1); }
-            100% { border-color: rgba(59, 130, 246, 0.3); }
+            0%, 100% { border-color: rgba(59, 130, 246, 0.4); box-shadow: 0 0 0 rgba(59, 130, 246, 0); }
+            50% { border-color: rgba(34, 197, 94, 0.9); box-shadow: 0 0 15px rgba(34, 197, 94, 0.4); }
         }
         .scanning-active {
-            animation: scanPulse 2s infinite;
+            animation: scanPulse 1.5s infinite;
         }
         [contenteditable]:focus {
             background-color: #eff6ff;
@@ -24,44 +22,87 @@
     </style>
 </head>
 <body class="bg-slate-100 p-4 font-sans antialiased text-slate-800">
-    <div class="max-w-md mx-auto bg-white rounded-xl shadow-lg overflow-hidden md:max-w-3xl p-6 border border-slate-200">
-        <h1 class="text-2xl font-extrabold mb-4 text-center text-slate-900">Continuous CAC Scanner</h1>
+    <div class="max-w-4xl mx-auto bg-white rounded-xl shadow-lg overflow-hidden p-6 border border-slate-200">
         
-        <div id="securityWarning" class="hidden mb-4 p-4 bg-red-100 text-red-700 rounded-lg text-sm font-semibold border border-red-200">
-            Warning: You are opening this file locally. Android browsers block camera access for local files for security reasons. You must host this on a secure server (HTTPS) or use a local web server app.
-        </div>
-
-        <div class="mb-4 relative rounded overflow-hidden bg-black shadow-inner">
-            <video id="video" class="w-full object-cover" style="min-height: 250px;"></video>
-            <div id="overlay" class="absolute inset-0 border-4 border-blue-500/30 m-4 rounded hidden pointer-events-none"></div>
-        </div>
-        
-        <div class="flex justify-center gap-4 mb-6">
-            <button id="startButton" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded shadow transition">Start Camera</button>
-            <button id="resetButton" class="bg-slate-500 hover:bg-slate-600 text-white font-semibold py-2 px-6 rounded shadow transition hidden">Stop Camera</button>
-        </div>
-
-        <div>
-            <div class="flex justify-between items-center mb-3">
-                <div>
-                    <h2 class="text-lg font-bold text-slate-800">Live Roster</h2>
-                    <p class="text-xs text-slate-500">Tap any Name or DoD ID below to edit it.</p>
-                </div>
-                <button id="exportCsv" class="bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold py-1.5 px-4 rounded shadow transition">Export to CSV</button>
+        <!-- Header & Status -->
+        <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-2">
+            <div>
+                <h1 class="text-2xl font-extrabold text-slate-900">CAC Roster Scanner</h1>
+                <p id="engineStatus" class="text-xs font-mono text-slate-500">Initializing decoder engine...</p>
             </div>
-            <div class="overflow-x-auto rounded border border-slate-200 shadow-sm">
-                <table class="min-w-full bg-white">
+            <div class="flex items-center gap-2">
+                <span class="text-xs font-semibold uppercase px-2.5 py-1 rounded bg-blue-100 text-blue-800">
+                    Total Scanned: <span id="scanCount">0</span>
+                </span>
+            </div>
+        </div>
+
+        <div id="securityWarning" class="hidden mb-4 p-4 bg-red-100 text-red-700 rounded-lg text-sm font-semibold border border-red-200">
+            Warning: Camera access requires HTTPS or localhost. Opening via file:// will block the video stream on mobile browsers.
+        </div>
+
+        <!-- Video Viewport -->
+        <div class="mb-4 relative rounded-lg overflow-hidden bg-black shadow-inner aspect-video max-h-72 mx-auto flex items-center justify-center">
+            <video id="video" class="w-full h-full object-cover" playsinline muted></video>
+            
+            <!-- Target Guide Box -->
+            <div id="overlay" class="absolute w-3/4 h-1/2 border-2 border-blue-400/60 rounded-lg hidden pointer-events-none flex flex-col justify-between p-2">
+                <div class="text-[10px] text-white/80 font-mono bg-black/50 px-1.5 py-0.5 rounded self-start">ALIGN PDF417 OR CODE39 BARCODE HERE</div>
+                <div class="w-full h-0.5 bg-red-500/70 my-auto"></div>
+                <div></div>
+            </div>
+
+            <!-- Flash feedback on successful scan -->
+            <div id="scanFlash" class="absolute inset-0 bg-green-400/40 hidden pointer-events-none transition-opacity"></div>
+        </div>
+
+        <!-- Scanner Controls -->
+        <div class="flex flex-wrap justify-center gap-3 mb-6">
+            <button id="startButton" class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold py-2.5 px-6 rounded-lg shadow transition">
+                Start Scanner
+            </button>
+            <button id="stopButton" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 px-6 rounded-lg shadow transition hidden">
+                Stop Scanner
+            </button>
+            <button id="manualAddBtn" class="bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold py-2.5 px-4 rounded-lg transition text-sm">
+                + Manual Row
+            </button>
+        </div>
+
+        <!-- Visual Roster Table -->
+        <div class="border-t border-slate-200 pt-5">
+            <div class="flex flex-wrap justify-between items-center mb-3 gap-2">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-800">Captured CAC Roster</h2>
+                    <p class="text-xs text-slate-500">Click any cell to edit inline. Duplicate scans within 4 seconds are ignored.</p>
+                </div>
+                <div class="flex gap-2">
+                    <button id="clearRosterBtn" class="bg-slate-100 hover:bg-red-50 text-red-600 border border-slate-300 text-xs font-bold py-2 px-3 rounded transition">
+                        Clear All
+                    </button>
+                    <button id="exportCsv" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-4 rounded shadow transition">
+                        Export CSV
+                    </button>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto rounded-lg border border-slate-200 shadow-sm">
+                <table class="min-w-full bg-white text-left border-collapse">
                     <thead>
-                        <tr class="bg-slate-100 text-slate-600 uppercase text-xs leading-normal">
-                            <th class="py-3 px-3 text-left font-bold w-2/5">Name</th>
-                            <th class="py-3 px-3 text-left font-bold w-1/3">DoD ID</th>
-                            <th class="py-3 px-3 text-left font-bold">Time</th>
-                            <th class="py-3 px-2 text-center font-bold">Action</th>
+                        <tr class="bg-slate-800 text-white uppercase text-xs tracking-wider">
+                            <th class="py-3 px-3 font-bold w-12 text-center">#</th>
+                            <th class="py-3 px-3 font-bold">Last, First Name</th>
+                            <th class="py-3 px-3 font-bold">Rank / Branch</th>
+                            <th class="py-3 px-3 font-bold">DoD ID (EDIPI)</th>
+                            <th class="py-3 px-3 font-bold">Timestamp</th>
+                            <th class="py-3 px-2 text-center font-bold w-16">Del</th>
                         </tr>
                     </thead>
-                    <tbody id="rosterBody" class="text-slate-600 text-sm font-medium">
+                    <tbody id="rosterBody" class="divide-y divide-slate-200 text-slate-700 text-sm">
                         <tr id="emptyState">
-                            <td colspan="4" class="py-6 text-center text-slate-400 italic">Start the camera and show a CAC to auto-add to this roster.</td>
+                            <td colspan="6" class="py-8 text-center text-slate-400 italic">
+                                No CACs scanned yet. Click "Start Scanner" and hold the back barcode inside the target box.
+                            </td>
                         </tr>
                     </tbody>
                 </table>
@@ -70,193 +111,342 @@
     </div>
 
     <script>
-        let codeReader;
-        let lastScannedData = "";
-        let cooldownTimer = null;
-        
-        window.addEventListener('load', function () {
+        // --- 1. Persistent Audio Context (Zero-Lag Beep) ---
+        let audioCtx = null;
+        function playBeep() {
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(1046.50, audioCtx.currentTime); // C6 crisp tone
+                gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.1);
+            } catch (e) {}
+        }
+
+        // --- 2. State & Elements ---
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const scanFlash = document.getElementById('scanFlash');
+        const startBtn = document.getElementById('startButton');
+        const stopBtn = document.getElementById('stopButton');
+        const engineStatus = document.getElementById('engineStatus');
+        const rosterBody = document.getElementById('rosterBody');
+        const scanCountEl = document.getElementById('scanCount');
+
+        let mediaStream = null;
+        let isScanning = false;
+        let scanLoopTimer = null;
+        let nativeDetector = null;
+        let zxingReader = null;
+        let offscreenCanvas = document.createElement('canvas');
+        let offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+
+        let lastScannedRaw = "";
+        let lastScanTime = 0;
+
+        // --- 3. Initialize Fastest Available Barcode Engine ---
+        window.addEventListener('DOMContentLoaded', async () => {
             if (window.location.protocol === 'file:' || window.location.protocol === 'content:') {
                 document.getElementById('securityWarning').classList.remove('hidden');
             }
 
-            const hints = new Map();
-            hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.PDF_417]);
-            codeReader = new ZXing.BrowserMultiFormatReader(hints);
-
-            const overlay = document.getElementById('overlay');
-            const startBtn = document.getElementById('startButton');
-            const resetBtn = document.getElementById('resetButton');
-
-            startBtn.addEventListener('click', () => {
-                startBtn.classList.add('hidden');
-                resetBtn.classList.remove('hidden');
-                overlay.classList.remove('hidden');
-                overlay.classList.add('scanning-active');
-                
-                // Continuous scanning using decodeFromConstraints
-                codeReader.decodeFromConstraints({ video: { facingMode: "environment" } }, 'video', (result, err) => {
-                    if (result) {
-                        // Prevent the exact same barcode from being added 50 times a second
-                        if (result.text !== lastScannedData) {
-                            lastScannedData = result.text;
-                            playBeep();
-                            processBarcodeData(result.text);
-                            
-                            // Clear cooldown and reset it so the same card can be scanned again after 3 seconds if needed
-                            if (cooldownTimer) clearTimeout(cooldownTimer);
-                            cooldownTimer = setTimeout(() => { lastScannedData = ""; }, 3000);
-                        }
+            // Check for hardware-accelerated native BarcodeDetector first
+            if ('BarcodeDetector' in window) {
+                try {
+                    const formats = await BarcodeDetector.getSupportedFormats();
+                    if (formats.includes('pdf417')) {
+                        nativeDetector = new BarcodeDetector({ formats: ['pdf417', 'code_39'] });
+                        engineStatus.textContent = "Engine: Hardware-Accelerated Native PDF417 (Zero-Lag)";
+                        engineStatus.className = "text-xs font-mono text-emerald-600 font-semibold";
                     }
-                    // Ignore errors as they just mean "no barcode found in this frame"
-                }).catch(err => {
-                    console.error("Camera access error:", err);
-                    stopScanner();
-                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                        alert("Permission to use the camera was denied.");
-                    } else if (err.message && err.message.includes('getUserMedia is not implemented')) {
-                        alert("Your browser is blocking camera access because this file is not hosted on a secure server (HTTPS).");
-                    } else {
-                        alert("Camera error: " + err.message);
-                    }
-                });
-            });
-
-            resetBtn.addEventListener('click', stopScanner);
-
-            function stopScanner() {
-                codeReader.reset(); // Stops the camera track and the scanning loop
-                overlay.classList.add('hidden');
-                overlay.classList.remove('scanning-active');
-                resetBtn.classList.add('hidden');
-                startBtn.classList.remove('hidden');
-                lastScannedData = "";
+                } catch (e) {}
             }
 
-            document.getElementById('exportCsv').addEventListener('click', () => {
-                const rows = document.querySelectorAll('#rosterBody tr:not(#emptyState)');
-                if (rows.length === 0) {
-                    alert("The roster is empty!");
-                    return;
-                }
-                
-                let csvContent = "data:text/csv;charset=utf-8,Name,DoD ID,Time\n";
-                rows.forEach(row => {
-                    const cells = row.querySelectorAll('td');
-                    if(cells.length >= 3) {
-                        const name = cells[0].innerText.replace(/"/g, '""').trim();
-                        const dodId = cells[1].innerText.trim();
-                        const time = cells[2].innerText.trim();
-                        csvContent += `"${name}","${dodId}","${time}"\n`;
-                    }
-                });
-                
-                const encodedUri = encodeURI(csvContent);
-                const link = document.createElement("a");
-                link.setAttribute("href", encodedUri);
-                link.setAttribute("download", `sign_in_roster_${new Date().toISOString().split('T')[0]}.csv`);
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-            });
+            // Fallback to throttled ZXing with strict PDF417 + Code39 hints
+            if (!nativeDetector) {
+                const hints = new Map();
+                hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+                    ZXing.BarcodeFormat.PDF_417,
+                    ZXing.BarcodeFormat.CODE_39
+                ]);
+                // Note: Intentionally omitting TRY_HARDER so frames decode in <15ms without freezing UI
+                zxingReader = new ZXing.BrowserMultiFormatReader(hints);
+                engineStatus.textContent = "Engine: Throttled ZXing ROI Decoder (150ms interval)";
+            }
         });
 
-        function playBeep() {
+        // --- 4. Non-Blocking Camera & Throttled Decode Loop ---
+        startBtn.addEventListener('click', async () => {
             try {
-                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                const oscillator = audioCtx.createOscillator();
-                const gainNode = audioCtx.createGain();
-                oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
-                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
-                oscillator.connect(gainNode);
-                gainNode.connect(audioCtx.destination);
-                oscillator.start();
-                oscillator.stop(audioCtx.currentTime + 0.15);
-            } catch (e) {
-                console.log("Audio not supported");
+                // Unlock audio on user gesture
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: { ideal: "environment" },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        focusMode: { ideal: "continuous" }
+                    },
+                    audio: false
+                });
+
+                video.srcObject = mediaStream;
+                await video.play();
+
+                isScanning = true;
+                startBtn.classList.add('hidden');
+                stopBtn.classList.remove('hidden');
+                overlay.classList.remove('hidden');
+                overlay.classList.add('scanning-active');
+
+                scheduleNextScan();
+            } catch (err) {
+                alert("Camera Error: " + err.message);
+                stopScanner();
             }
+        });
+
+        stopBtn.addEventListener('click', stopScanner);
+
+        function stopScanner() {
+            isScanning = false;
+            if (scanLoopTimer) clearTimeout(scanLoopTimer);
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            video.srcObject = null;
+            overlay.classList.add('hidden');
+            overlay.classList.remove('scanning-active');
+            stopBtn.classList.add('hidden');
+            startBtn.classList.remove('hidden');
         }
 
-        function processBarcodeData(rawData) {
+        function scheduleNextScan() {
+            if (!isScanning) return;
+            scanLoopTimer = setTimeout(scanSingleFrame, 140); // ~7 FPS prevents main-thread freeze
+        }
+
+        async function scanSingleFrame() {
+            if (!isScanning || video.readyState < 2) {
+                scheduleNextScan();
+                return;
+            }
+
+            try {
+                if (nativeDetector) {
+                    const barcodes = await nativeDetector.detect(video);
+                    if (barcodes.length > 0 && barcodes[0].rawValue) {
+                        handleSuccessfulRead(barcodes[0].rawValue);
+                    }
+                } else if (zxingReader) {
+                    // Crop central 80% region of interest so ZXing processes fewer pixels
+                    const vw = video.videoWidth;
+                    const vh = video.videoHeight;
+                    const cropW = Math.floor(vw * 0.8);
+                    const cropH = Math.floor(vh * 0.6);
+                    const startX = Math.floor((vw - cropW) / 2);
+                    const startY = Math.floor((vh - cropH) / 2);
+
+                    offscreenCanvas.width = cropW;
+                    offscreenCanvas.height = cropH;
+                    offscreenCtx.drawImage(video, startX, startY, cropW, cropH, 0, 0, cropW, cropH);
+
+                    const luminanceSource = new ZXing.HTMLCanvasElementLuminanceSource(offscreenCanvas);
+                    const binaryBitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminanceSource));
+                    const result = zxingReader.decodeBitmap(binaryBitmap);
+                    if (result && result.text) {
+                        handleSuccessfulRead(result.text);
+                    }
+                }
+            } catch (err) {
+                // Normal when no barcode is present in current frame
+            }
+
+            scheduleNextScan();
+        }
+
+        function handleSuccessfulRead(rawText) {
+            const now = Date.now();
+            // 4-second cooldown for the exact same card
+            if (rawText === lastScannedRaw && (now - lastScanTime) < 4000) return;
+
+            lastScannedRaw = rawText;
+            lastScanTime = now;
+
+            playBeep();
+            triggerVisualFlash();
+
+            const parsed = parseDoDCAC(rawText);
+            addToRoster(parsed.name, parsed.rankBranch, parsed.dodId);
+        }
+
+        function triggerVisualFlash() {
+            scanFlash.classList.remove('hidden');
+            setTimeout(() => scanFlash.classList.add('hidden'), 180);
+        }
+
+        // --- 5. Instant O(1) DMDC CAC Barcode Parser (PDF417 & Code 39) ---
+        function parseDoDCAC(raw) {
+            const clean = raw.trim();
             let dodId = "";
             let name = "";
+            let rankBranch = "N/A";
 
-            try {
-                // Parse standard DMDC fixed-width format
-                if (rawData.startsWith("M") || rawData.length > 50) {
-                    const base32Edipi = rawData.substring(1, 8);
-                    const parsedEdipi = parseInt(base32Edipi, 32);
-                    
-                    if (!isNaN(parsedEdipi) && parsedEdipi.toString().length >= 9) {
-                        dodId = parsedEdipi.toString().padStart(10, '0');
-                        
-                        const firstName = rawData.substring(16, 36).trim();
-                        const lastName = rawData.substring(37, 63).trim();
-                        if (lastName || firstName) {
-                            name = `${lastName}, ${firstName}`;
-                        }
-                    }
-                }
-            } catch (e) {
-                console.warn("Failed standard DMDC parse", e);
-            }
+            // Case 1: Back of CAC 2D PDF417 Barcode (88 chars Version '1' or 89 chars Version 'N')
+            if ((clean.startsWith('N') || clean.startsWith('1')) && clean.length >= 78) {
+                // Version 'N' has an 8-char random prefix before index 8; Version '1' starts at index 1
+                const offset = clean.startsWith('N') ? 1 : 0;
 
-            // Fallback heuristics
-            if (!dodId) {
-                const dodIdMatch = rawData.match(/\b\d{10}\b/);
-                if (dodIdMatch) dodId = dodIdMatch[0];
-            }
-            if (!name) {
-                const lines = rawData.split(/[\n\r^]+/);
-                for (let line of lines) {
-                    if (line.includes("NMD") || line.includes("NAM")) {
-                        name = line.replace(/(NMD|NAM)/g, '').trim();
-                        break;
-                    }
+                // Extract 7-char Base32 Person Designator Identifier (EDIPI / DoD ID)
+                const b32Edipi = clean.substring(7 + offset, 14 + offset).trim();
+                const parsedEdipi = parseInt(b32Edipi, 32);
+                if (!isNaN(parsedEdipi)) {
+                    dodId = parsedEdipi.toString().padStart(10, '0');
                 }
-                if (!name) {
-                    const dcsMatch = rawData.match(/DCS([A-Z\s]+)/);
-                    const dacMatch = rawData.match(/DAC([A-Z\s]+)/);
-                    if (dcsMatch && dacMatch) {
-                        name = `${dcsMatch[1].trim()}, ${dacMatch[1].trim()}`;
-                    }
+
+                // Extract First Name (20 chars) and Last Name (26 chars)
+                const firstName = clean.substring(15 + offset, 35 + offset).trim();
+                const lastName = clean.substring(35 + offset, 61 + offset).trim();
+                if (lastName || firstName) {
+                    name = `${lastName}, ${firstName}`;
+                }
+
+                // Extract Branch & Rank (positions 65..77 + offset)
+                const branchCode = clean.substring(65 + offset, 66 + offset).trim();
+                const rankCode = clean.substring(71 + offset, 77 + offset).trim();
+                const branchMap = { 'A': 'USA', 'F': 'USAF', 'N': 'USN', 'M': 'USMC', 'C': 'USCG', 'S': 'USSF', 'D': 'DoD' };
+                const branchLabel = branchMap[branchCode] || branchCode;
+                if (rankCode || branchLabel) {
+                    rankBranch = [rankCode, branchLabel].filter(Boolean).join(' / ');
                 }
             }
+            // Case 2: Front of CAC 1D Code 39 Barcode (18 chars, starts with '1')
+            else if (clean.length === 18 && clean.startsWith('1')) {
+                const b32Edipi = clean.substring(1, 8).trim();
+                const parsedEdipi = parseInt(b32Edipi, 32);
+                if (!isNaN(parsedEdipi)) {
+                    dodId = parsedEdipi.toString().padStart(10, '0');
+                }
+                name = "[Front Barcode - Enter Name]";
+            }
+            // Case 3: Older or Alternate Delimited DMDC Formats
+            else {
+                const b32Candidate = clean.substring(1, 8);
+                const parsedCandidate = parseInt(b32Candidate, 32);
+                if (!isNaN(parsedCandidate) && parsedCandidate.toString().length >= 9) {
+                    dodId = parsedCandidate.toString().padStart(10, '0');
+                } else {
+                    const tenDigit = clean.match(/\b\d{10}\b/);
+                    if (tenDigit) dodId = tenDigit[0];
+                }
 
-            addToTable(name || "MANUAL ENTRY", dodId || "MANUAL ENTRY");
+                if (clean.length >= 63) {
+                    const fn = clean.substring(16, 36).trim();
+                    const ln = clean.substring(36, 62).trim();
+                    if (ln || fn) name = `${ln}, ${fn}`;
+                }
+            }
+
+            return {
+                name: name || "MANUAL ENTRY REQUIRED",
+                rankBranch: rankBranch,
+                dodId: dodId || "UNKNOWN ID"
+            };
         }
 
-        function addToTable(name, dodId) {
-            const tbody = document.getElementById('rosterBody');
+        // --- 6. Visual Roster Table Management ---
+        function addToRoster(name, rankBranch, dodId) {
             const emptyState = document.getElementById('emptyState');
             if (emptyState) emptyState.remove();
 
-            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            
+            const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             const tr = document.createElement('tr');
-            tr.className = "border-b border-slate-200 hover:bg-slate-50 transition";
-            
-            // ContentEditable allows inline editing directly in the table
+            tr.className = "hover:bg-blue-50/50 transition";
+
             tr.innerHTML = `
-                <td contenteditable="true" class="py-3 px-3 text-left whitespace-nowrap focus:bg-blue-50 transition" title="Tap to edit">${name}</td>
-                <td contenteditable="true" class="py-3 px-3 text-left font-mono focus:bg-blue-50 transition" title="Tap to edit">${dodId}</td>
-                <td class="py-3 px-3 text-left text-slate-500">${time}</td>
+                <td class="row-index py-3 px-3 text-center font-mono text-xs text-slate-400"></td>
+                <td contenteditable="true" class="py-3 px-3 font-semibold text-slate-800 whitespace-nowrap">${escapeHtml(name)}</td>
+                <td contenteditable="true" class="py-3 px-3 text-slate-600 whitespace-nowrap">${escapeHtml(rankBranch)}</td>
+                <td contenteditable="true" class="py-3 px-3 font-mono text-blue-700 font-semibold whitespace-nowrap">${escapeHtml(dodId)}</td>
+                <td class="py-3 px-3 text-xs text-slate-500 whitespace-nowrap">${timestamp}</td>
                 <td class="py-3 px-2 text-center">
-                    <button onclick="this.closest('tr').remove(); checkEmpty();" class="text-red-500 hover:text-red-700 font-bold px-2 py-1 rounded hover:bg-red-50 transition">X</button>
+                    <button onclick="removeRow(this)" class="text-red-500 hover:text-red-700 hover:bg-red-50 font-bold px-2.5 py-1 rounded transition">✕</button>
                 </td>
             `;
-            
-            // Prepend so newest scans show at the top
-            tbody.insertBefore(tr, tbody.firstChild);
+
+            rosterBody.insertBefore(tr, rosterBody.firstChild);
+            renumberRoster();
         }
 
-        // Global function to restore empty state message if all rows are deleted
-        window.checkEmpty = function() {
-            const tbody = document.getElementById('rosterBody');
-            if (tbody.children.length === 0) {
-                tbody.innerHTML = `<tr id="emptyState"><td colspan="4" class="py-6 text-center text-slate-400 italic">Start the camera and show a CAC to auto-add to this roster.</td></tr>`;
+        window.removeRow = function(btn) {
+            btn.closest('tr').remove();
+            renumberRoster();
+            if (rosterBody.children.length === 0) {
+                rosterBody.innerHTML = `<tr id="emptyState"><td colspan="6" class="py-8 text-center text-slate-400 italic">No CACs scanned yet. Click "Start Scanner" and hold the back barcode inside the target box.</td></tr>`;
             }
+        };
+
+        function renumberRoster() {
+            const rows = rosterBody.querySelectorAll('tr:not(#emptyState)');
+            scanCountEl.textContent = rows.length;
+            rows.forEach((row, idx) => {
+                const numCell = row.querySelector('.row-index');
+                if (numCell) numCell.textContent = rows.length - idx;
+            });
         }
+
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        }
+
+        document.getElementById('manualAddBtn').addEventListener('click', () => {
+            addToRoster("LAST, FIRST", "RANK / USAF", "0000000000");
+        });
+
+        document.getElementById('clearRosterBtn').addEventListener('click', () => {
+            if (confirm("Clear all scanned personnel from the roster?")) {
+                rosterBody.innerHTML = `<tr id="emptyState"><td colspan="6" class="py-8 text-center text-slate-400 italic">No CACs scanned yet. Click "Start Scanner" and hold the back barcode inside the target box.</td></tr>`;
+                scanCountEl.textContent = "0";
+                lastScannedRaw = "";
+            }
+        });
+
+        document.getElementById('exportCsv').addEventListener('click', () => {
+            const rows = rosterBody.querySelectorAll('tr:not(#emptyState)');
+            if (rows.length === 0) {
+                alert("The roster is empty!");
+                return;
+            }
+
+            let csvRows = ["#,Name,Rank_Branch,DoD_ID,Timestamp"];
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                const num = cells[0].innerText.trim();
+                const name = cells[1].innerText.replace(/"/g, '""').trim();
+                const rank = cells[2].innerText.replace(/"/g, '""').trim();
+                const dodId = cells[3].innerText.replace(/"/g, '""').trim();
+                const time = cells[4].innerText.trim();
+                csvRows.push(`"${num}","${name}","${rank}","${dodId}","${time}"`);
+            });
+
+            const blob = new Blob([csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `CAC_Roster_${new Date().toISOString().slice(0, 10)}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        });
     </script>
 </body>
 </html>

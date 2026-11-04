@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>CAC Scanner Continuous</title>
+    <title>CAC Scanner (Canvas Snapshot)</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script type="text/javascript" src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <style>
         @keyframes scanPulse {
             0% { border-color: rgba(59, 130, 246, 0.3); }
@@ -13,14 +13,13 @@
             100% { border-color: rgba(59, 130, 246, 0.3); }
         }
         .scanning-active {
-            animation: scanPulse 2s infinite;
+            animation: scanPulse 1.5s infinite;
         }
         [contenteditable]:focus {
             background-color: #eff6ff;
             outline: 2px solid #3b82f6;
             border-radius: 4px;
         }
-        /* Make the video area a bit taller to help align */
         #video {
             min-height: 300px;
         }
@@ -28,20 +27,23 @@
 </head>
 <body class="bg-slate-100 p-4 font-sans antialiased text-slate-800">
     <div class="max-w-md mx-auto bg-white rounded-xl shadow-lg overflow-hidden md:max-w-3xl p-6 border border-slate-200">
-        <h1 class="text-2xl font-extrabold mb-4 text-center text-slate-900">Continuous CAC Scanner</h1>
+        <h1 class="text-2xl font-extrabold mb-4 text-center text-slate-900">CAC Scanner (Canvas Engine)</h1>
         
         <div id="securityWarning" class="hidden mb-4 p-4 bg-red-100 text-red-700 rounded-lg text-sm font-semibold border border-red-200">
             Warning: You are opening this file locally. Android browsers block camera access for local files for security reasons. You must host this on a secure server (HTTPS) or use a local web server app.
         </div>
 
         <div class="mb-4 relative rounded overflow-hidden bg-black shadow-inner">
-            <video id="video" class="w-full object-cover"></video>
+            <video id="video" class="w-full object-cover" autoplay playsinline></video>
             <div id="overlay" class="absolute inset-0 border-4 border-blue-500/30 m-8 rounded hidden pointer-events-none flex flex-col justify-center items-center">
                 <div class="w-full h-0.5 bg-red-500/50 shadow"></div>
             </div>
             <p id="focusHint" class="absolute bottom-2 left-0 right-0 text-center text-white text-xs font-bold bg-black/50 py-1 hidden">Align barcode horizontally with the red line.</p>
         </div>
         
+        <!-- Hidden canvas used for taking snapshots -->
+        <canvas id="canvas" class="hidden"></canvas>
+
         <div class="flex justify-center gap-4 mb-6">
             <button id="startButton" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded shadow transition">Start Camera</button>
             <button id="resetButton" class="bg-slate-500 hover:bg-slate-600 text-white font-semibold py-2 px-6 rounded shadow transition hidden">Stop Camera</button>
@@ -76,29 +78,27 @@
     </div>
 
     <script>
-        let codeReader;
+        let html5QrCode;
         let lastScannedData = "";
         let cooldownTimer = null;
         let activeStream = null;
+        let scanInterval = null;
+        let isDecoding = false;
         
         window.addEventListener('load', function () {
             if (window.location.protocol === 'file:' || window.location.protocol === 'content:') {
                 document.getElementById('securityWarning').classList.remove('hidden');
             }
 
-            const hints = new Map();
-            // Force PDF417 only
-            hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.PDF_417]);
-            // Try to force harder effort (slower but more accurate for dense barcodes)
-            hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+            html5QrCode = new Html5Qrcode("video"); // We initialize it, but won't use its built in camera manager
             
-            codeReader = new ZXing.BrowserMultiFormatReader(hints);
-
             const overlay = document.getElementById('overlay');
             const focusHint = document.getElementById('focusHint');
             const startBtn = document.getElementById('startButton');
             const resetBtn = document.getElementById('resetButton');
             const videoElement = document.getElementById('video');
+            const canvasElement = document.getElementById('canvas');
+            const canvasCtx = canvasElement.getContext('2d', { willReadFrequently: true });
 
             startBtn.addEventListener('click', async () => {
                 startBtn.classList.add('hidden');
@@ -108,8 +108,7 @@
                 overlay.classList.add('scanning-active');
                 
                 try {
-                    // Request high resolution and continuous focus. 
-                    // Default getUserMedia often defaults to 640x480 which is too blurry for dense PDF417.
+                    // Start standard HTML5 Video manually to prevent library lockups
                     const constraints = {
                         video: {
                             facingMode: "environment",
@@ -120,47 +119,73 @@
 
                     activeStream = await navigator.mediaDevices.getUserMedia(constraints);
                     
-                    // Attempt to force continuous autofocus if the hardware supports it
                     try {
                         const track = activeStream.getVideoTracks()[0];
                         const capabilities = track.getCapabilities();
                         if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
-                            await track.applyConstraints({
-                                advanced: [{ focusMode: "continuous" }]
-                            });
+                            await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
                         }
-                    } catch(e) {
-                        console.log("Autofocus constraint not supported by device.");
-                    }
+                    } catch(e) {}
 
                     videoElement.srcObject = activeStream;
-                    videoElement.setAttribute("playsinline", true);
-                    await videoElement.play();
-
-                    codeReader.decodeFromVideoElement(videoElement, (result, err) => {
-                        if (result) {
-                            if (result.text !== lastScannedData) {
-                                lastScannedData = result.text;
-                                playBeep();
-                                processBarcodeData(result.text);
-                                
-                                if (cooldownTimer) clearTimeout(cooldownTimer);
-                                cooldownTimer = setTimeout(() => { lastScannedData = ""; }, 3000);
-                            }
-                        }
-                    });
+                    
+                    // Wait for video to be ready before starting canvas loop
+                    videoElement.onloadedmetadata = () => {
+                        videoElement.play();
+                        canvasElement.width = videoElement.videoWidth;
+                        canvasElement.height = videoElement.videoHeight;
+                        
+                        // Start the background snapshot loop (every 500ms)
+                        scanInterval = setInterval(processVideoFrame, 500);
+                    };
 
                 } catch (err) {
                     console.error("Camera error:", err);
                     stopScanner();
-                    alert("Failed to start high-res camera. Please ensure permissions are granted and device is supported.");
+                    alert("Failed to start camera. Check permissions.");
                 }
             });
 
             resetBtn.addEventListener('click', stopScanner);
 
+            async function processVideoFrame() {
+                // If a decode is already running, skip this frame so we don't pile up memory
+                if (isDecoding) return;
+                
+                // Draw current video frame to hidden canvas
+                canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+                
+                // Convert canvas to image file
+                canvasElement.toBlob(async (blob) => {
+                    if(!blob) return;
+                    const file = new File([blob], "snapshot.jpg", { type: "image/jpeg" });
+                    
+                    isDecoding = true;
+                    try {
+                        // Pass image to html5-qrcode engine, restricting only to PDF417
+                        const result = await html5QrCode.scanFileV2(file, false);
+                        
+                        if (result && result.decodedText) {
+                            if (result.decodedText !== lastScannedData) {
+                                lastScannedData = result.decodedText;
+                                playBeep();
+                                processBarcodeData(result.decodedText);
+                                
+                                if (cooldownTimer) clearTimeout(cooldownTimer);
+                                cooldownTimer = setTimeout(() => { lastScannedData = ""; }, 3000);
+                            }
+                        }
+                    } catch(err) {
+                        // html5QrCode throws an error if NO barcode is found in the image. We just ignore it.
+                    } finally {
+                        isDecoding = false; // allow next frame to process
+                    }
+                }, 'image/jpeg', 0.8);
+            }
+
             function stopScanner() {
-                codeReader.reset();
+                if(scanInterval) clearInterval(scanInterval);
+                
                 if (activeStream) {
                     activeStream.getTracks().forEach(track => track.stop());
                     activeStream = null;
@@ -171,6 +196,7 @@
                 resetBtn.classList.add('hidden');
                 startBtn.classList.remove('hidden');
                 lastScannedData = "";
+                isDecoding = false;
             }
 
             document.getElementById('exportCsv').addEventListener('click', () => {
@@ -237,9 +263,7 @@
                         }
                     }
                 }
-            } catch (e) {
-                console.warn("Failed standard DMDC parse", e);
-            }
+            } catch (e) {}
 
             if (!dodId) {
                 const dodIdMatch = rawData.match(/\b\d{10}\b/);

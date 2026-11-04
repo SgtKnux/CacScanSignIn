@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>CAC Scanner (Canvas Snapshot)</title>
+    <title>CAC Scanner (Cropped Viewfinder)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <style>
@@ -20,28 +20,43 @@
             outline: 2px solid #3b82f6;
             border-radius: 4px;
         }
+        
+        /* New precise viewfinder styling */
+        #video-container {
+            width: 100%;
+            height: 160px; /* Much shorter, designed specifically for the wide PDF417 barcode */
+            position: relative;
+            overflow: hidden;
+            background: #000;
+            border-radius: 0.5rem;
+            box-shadow: inset 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+        }
+        
         #video {
-            min-height: 300px;
+            width: 100%;
+            height: 100%;
+            /* 'cover' ensures the video fills the wide box, cropping the top and bottom of the tall camera feed */
+            object-fit: cover; 
         }
     </style>
 </head>
 <body class="bg-slate-100 p-4 font-sans antialiased text-slate-800">
     <div class="max-w-md mx-auto bg-white rounded-xl shadow-lg overflow-hidden md:max-w-3xl p-6 border border-slate-200">
-        <h1 class="text-2xl font-extrabold mb-4 text-center text-slate-900">CAC Scanner (Canvas Engine)</h1>
+        <h1 class="text-2xl font-extrabold mb-4 text-center text-slate-900">CAC Scanner (Optimized)</h1>
         
         <div id="securityWarning" class="hidden mb-4 p-4 bg-red-100 text-red-700 rounded-lg text-sm font-semibold border border-red-200">
             Warning: You are opening this file locally. Android browsers block camera access for local files for security reasons. You must host this on a secure server (HTTPS) or use a local web server app.
         </div>
 
-        <div class="mb-4 relative rounded overflow-hidden bg-black shadow-inner">
-            <video id="video" class="w-full object-cover" autoplay playsinline></video>
-            <div id="overlay" class="absolute inset-0 border-4 border-blue-500/30 m-8 rounded hidden pointer-events-none flex flex-col justify-center items-center">
-                <div class="w-full h-0.5 bg-red-500/50 shadow"></div>
+        <div id="video-container" class="mb-4 border border-slate-300">
+            <video id="video" autoplay playsinline></video>
+            <div id="overlay" class="absolute inset-0 border-4 border-blue-500/30 hidden pointer-events-none flex flex-col justify-center items-center">
+                <div class="w-full h-0.5 bg-red-500/80 shadow"></div>
             </div>
-            <p id="focusHint" class="absolute bottom-2 left-0 right-0 text-center text-white text-xs font-bold bg-black/50 py-1 hidden">Align barcode horizontally with the red line.</p>
+            <p id="focusHint" class="absolute bottom-1 left-0 right-0 text-center text-white text-[10px] font-bold bg-black/60 py-1 hidden">Align barcode horizontally with the red line.</p>
         </div>
         
-        <!-- Hidden canvas used for taking snapshots -->
+        <!-- Hidden canvas used for taking cropped snapshots -->
         <canvas id="canvas" class="hidden"></canvas>
 
         <div class="flex justify-center gap-4 mb-6">
@@ -90,13 +105,14 @@
                 document.getElementById('securityWarning').classList.remove('hidden');
             }
 
-            html5QrCode = new Html5Qrcode("video"); // We initialize it, but won't use its built in camera manager
+            html5QrCode = new Html5Qrcode("video"); 
             
             const overlay = document.getElementById('overlay');
             const focusHint = document.getElementById('focusHint');
             const startBtn = document.getElementById('startButton');
             const resetBtn = document.getElementById('resetButton');
             const videoElement = document.getElementById('video');
+            const videoContainer = document.getElementById('video-container');
             const canvasElement = document.getElementById('canvas');
             const canvasCtx = canvasElement.getContext('2d', { willReadFrequently: true });
 
@@ -108,7 +124,6 @@
                 overlay.classList.add('scanning-active');
                 
                 try {
-                    // Start standard HTML5 Video manually to prevent library lockups
                     const constraints = {
                         video: {
                             facingMode: "environment",
@@ -129,14 +144,10 @@
 
                     videoElement.srcObject = activeStream;
                     
-                    // Wait for video to be ready before starting canvas loop
                     videoElement.onloadedmetadata = () => {
                         videoElement.play();
-                        canvasElement.width = videoElement.videoWidth;
-                        canvasElement.height = videoElement.videoHeight;
-                        
-                        // Start the background snapshot loop (every 500ms)
-                        scanInterval = setInterval(processVideoFrame, 500);
+                        // Scan faster now that we are processing smaller images (every 300ms)
+                        scanInterval = setInterval(processVideoFrame, 300);
                     };
 
                 } catch (err) {
@@ -149,20 +160,46 @@
             resetBtn.addEventListener('click', stopScanner);
 
             async function processVideoFrame() {
-                // If a decode is already running, skip this frame so we don't pile up memory
                 if (isDecoding) return;
                 
-                // Draw current video frame to hidden canvas
-                canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+                const videoWidth = videoElement.videoWidth;
+                const videoHeight = videoElement.videoHeight;
+                if (!videoWidth || !videoHeight) return;
+
+                // Calculate the exact bounding box of what the user currently sees in the cropped window
+                const containerAR = videoContainer.clientWidth / videoContainer.clientHeight;
+                const videoAR = videoWidth / videoHeight;
+
+                let sWidth, sHeight, sx, sy;
+
+                if (containerAR > videoAR) {
+                    // Video is taller than the container (typical portrait phone camera). Width matches fully.
+                    sWidth = videoWidth;
+                    sHeight = videoWidth / containerAR;
+                    sx = 0;
+                    sy = (videoHeight - sHeight) / 2; // Grab the middle slice
+                } else {
+                    // Video is wider than container (landscape). Height matches fully.
+                    sHeight = videoHeight;
+                    sWidth = videoHeight * containerAR;
+                    sx = (videoWidth - sWidth) / 2;
+                    sy = 0;
+                }
+
+                // Set canvas size to the exact cropped dimensions
+                canvasElement.width = sWidth;
+                canvasElement.height = sHeight;
                 
-                // Convert canvas to image file
+                // Draw ONLY the visible portion of the video to the canvas
+                canvasCtx.drawImage(videoElement, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
+                
                 canvasElement.toBlob(async (blob) => {
                     if(!blob) return;
                     const file = new File([blob], "snapshot.jpg", { type: "image/jpeg" });
                     
                     isDecoding = true;
                     try {
-                        // Pass image to html5-qrcode engine, restricting only to PDF417
+                        // Restrict scanning to PDF417 to save processing time
                         const result = await html5QrCode.scanFileV2(file, false);
                         
                         if (result && result.decodedText) {
@@ -176,11 +213,11 @@
                             }
                         }
                     } catch(err) {
-                        // html5QrCode throws an error if NO barcode is found in the image. We just ignore it.
+                        // Engine throws if no barcode is found in the frame. Ignore.
                     } finally {
-                        isDecoding = false; // allow next frame to process
+                        isDecoding = false; 
                     }
-                }, 'image/jpeg', 0.8);
+                }, 'image/jpeg', 1.0); // Highest quality for dense barcodes
             }
 
             function stopScanner() {
@@ -239,9 +276,7 @@
                 gainNode.connect(audioCtx.destination);
                 oscillator.start();
                 oscillator.stop(audioCtx.currentTime + 0.15);
-            } catch (e) {
-                console.log("Audio not supported");
-            }
+            } catch (e) {}
         }
 
         function processBarcodeData(rawData) {

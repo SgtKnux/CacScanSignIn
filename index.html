@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CAC Scanner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="text/javascript" src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
+</head>
+<body class="bg-slate-100 p-4 font-sans antialiased text-slate-800">
+    <div class="max-w-md mx-auto bg-white rounded-xl shadow-lg overflow-hidden md:max-w-2xl p-6 border border-slate-200">
+        <h1 class="text-2xl font-extrabold mb-4 text-center text-slate-900">CAC Sign-in Scanner</h1>
+        
+        <div class="mb-4 relative rounded overflow-hidden bg-black shadow-inner">
+            <video id="video" class="w-full object-cover" style="min-height: 250px;"></video>
+            <div id="overlay" class="absolute inset-0 border-4 border-blue-500/50 m-4 rounded hidden pointer-events-none"></div>
+        </div>
+        
+        <div class="flex justify-center gap-4 mb-6">
+            <button id="startButton" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded shadow transition">Scan CAC</button>
+            <button id="resetButton" class="bg-slate-500 hover:bg-slate-600 text-white font-semibold py-2 px-6 rounded shadow transition">Stop Camera</button>
+        </div>
+
+        <div id="reviewSection" class="bg-slate-50 p-4 rounded-lg mb-6 border border-slate-200 shadow-sm">
+            <h2 class="text-lg font-bold mb-3 text-slate-800">Review & Edit Data</h2>
+            <div class="mb-3 hidden">
+                <label class="block text-xs font-bold mb-1 text-slate-500">Raw PDF417 Data (Debug)</label>
+                <textarea id="rawData" class="w-full border border-slate-300 rounded p-2 text-xs text-slate-600 font-mono" rows="2" readonly></textarea>
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm font-bold mb-1 text-slate-700">Name</label>
+                <input type="text" id="parsedName" class="w-full border border-slate-300 rounded p-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition" placeholder="e.g. DOE, JOHN">
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-bold mb-1 text-slate-700">DoD ID Number</label>
+                <input type="text" id="parsedId" class="w-full border border-slate-300 rounded p-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition" placeholder="10-digit EDIPI">
+            </div>
+            <button id="addToList" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 px-4 rounded shadow transition text-lg">Add to Roster</button>
+        </div>
+
+        <div>
+            <div class="flex justify-between items-center mb-3">
+                <h2 class="text-lg font-bold text-slate-800">Current Roster</h2>
+                <button id="exportCsv" class="bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold py-1.5 px-4 rounded shadow transition">Export to CSV</button>
+            </div>
+            <div class="overflow-x-auto rounded border border-slate-200 shadow-sm">
+                <table class="min-w-full bg-white">
+                    <thead>
+                        <tr class="bg-slate-100 text-slate-600 uppercase text-xs leading-normal">
+                            <th class="py-3 px-4 text-left font-bold">Name</th>
+                            <th class="py-3 px-4 text-left font-bold">DoD ID</th>
+                            <th class="py-3 px-4 text-left font-bold">Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rosterBody" class="text-slate-600 text-sm font-medium">
+                        <tr id="emptyState">
+                            <td colspan="3" class="py-4 text-center text-slate-400 italic">No one signed in yet.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let codeReader;
+        const roster = [];
+        
+        window.addEventListener('load', function () {
+            // Initialize ZXing PDF417 specific reader
+            const hints = new Map();
+            hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.PDF_417]);
+            codeReader = new ZXing.BrowserMultiFormatReader(hints);
+
+            const overlay = document.getElementById('overlay');
+
+            document.getElementById('startButton').addEventListener('click', () => {
+                overlay.classList.remove('hidden');
+                
+                // Prioritize rear camera for phones
+                codeReader.decodeFromConstraints({ video: { facingMode: "environment" } }, 'video', (result, err) => {
+                    if (result) {
+                        playBeep();
+                        processBarcodeData(result.text);
+                        // Stop scanning after successful read
+                        codeReader.reset();
+                        overlay.classList.add('hidden');
+                    }
+                }).catch(err => {
+                    console.error(err);
+                    alert("Camera access error. Ensure permissions are granted.");
+                });
+            });
+
+            document.getElementById('resetButton').addEventListener('click', () => {
+                codeReader.reset();
+                overlay.classList.add('hidden');
+            });
+
+            document.getElementById('addToList').addEventListener('click', () => {
+                const name = document.getElementById('parsedName').value.trim();
+                const dodId = document.getElementById('parsedId').value.trim();
+                
+                if(name || dodId) {
+                    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    roster.push({ name, dodId, time });
+                    updateRosterView();
+                    
+                    // Clear inputs for next person
+                    document.getElementById('parsedName').value = '';
+                    document.getElementById('parsedId').value = '';
+                    document.getElementById('rawData').value = '';
+                } else {
+                    alert("Please scan a CAC or manually enter the Name and DoD ID.");
+                }
+            });
+
+            document.getElementById('exportCsv').addEventListener('click', () => {
+                if (roster.length === 0) {
+                    alert("The roster is empty!");
+                    return;
+                }
+                
+                // Construct CSV
+                let csvContent = "data:text/csv;charset=utf-8,Name,DoD ID,Time\n";
+                roster.forEach(row => {
+                    // Escape quotes in names if any exist
+                    const safeName = row.name.replace(/"/g, '""');
+                    csvContent += `"${safeName}","${row.dodId}","${row.time}"\n`;
+                });
+                
+                // Trigger download
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `sign_in_roster_${new Date().toISOString().split('T')[0]}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            });
+        });
+
+        function playBeep() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // 880 Hz
+                
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime); // Volume
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.15); // 150ms beep
+            } catch (e) {
+                console.log("Audio not supported or blocked");
+            }
+        }
+
+        function processBarcodeData(rawData) {
+            document.getElementById('rawData').value = rawData;
+            document.getElementById('rawData').parentElement.classList.remove('hidden');
+            
+            let dodId = "";
+            let name = "";
+
+            // Heuristic 1: Extract 10-digit EDIPI (DoD ID)
+            const dodIdMatch = rawData.match(/\b\d{10}\b/);
+            if (dodIdMatch) {
+                dodId = dodIdMatch[0];
+            }
+
+            // Heuristic 2: Try extracting name
+            // CACs store data in slightly different formats (AAMVA or raw lines).
+            // Often, name fields start with "NMD" or "NAM" or are simply formatted as LAST,FIRST
+            const lines = rawData.split(/[\n\r^]+/);
+            for (let line of lines) {
+                if (line.includes("NMD") || line.includes("NAM")) {
+                    name = line.replace(/(NMD|NAM)/g, '').trim();
+                    break;
+                }
+            }
+            
+            // If the heuristics fail, leave blank so the user can easily type it
+            if(!name) {
+                // Try looking for standard AAMVA DAA or DAB tags
+                const dcsMatch = rawData.match(/DCS([A-Z\s]+)/); // Last name
+                const dacMatch = rawData.match(/DAC([A-Z\s]+)/); // First name
+                if (dcsMatch && dacMatch) {
+                    name = `${dcsMatch[1].trim()}, ${dacMatch[1].trim()}`;
+                }
+            }
+
+            document.getElementById('parsedName').value = name;
+            document.getElementById('parsedId').value = dodId;
+            
+            // Scroll to review section so the user sees it on a small screen
+            document.getElementById('reviewSection').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function updateRosterView() {
+            const tbody = document.getElementById('rosterBody');
+            tbody.innerHTML = '';
+            
+            if(roster.length === 0) {
+                tbody.innerHTML = `<tr id="emptyState"><td colspan="3" class="py-4 text-center text-slate-400 italic">No one signed in yet.</td></tr>`;
+                return;
+            }
+
+            roster.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-slate-100 hover:bg-slate-50 transition";
+                tr.innerHTML = `
+                    <td class="py-3 px-4 text-left whitespace-nowrap">${row.name}</td>
+                    <td class="py-3 px-4 text-left font-mono">${row.dodId}</td>
+                    <td class="py-3 px-4 text-left text-slate-500">${row.time}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+    </script>
+</body>
+</html>
+
